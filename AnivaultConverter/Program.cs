@@ -11,9 +11,9 @@ builder.Services
     .AddSerilog(serilogConfig =>
     {
         serilogConfig = serilogConfig.MinimumLevel.Information().WriteTo.Console();
-        
-        serilogConfig.WriteTo.File("anivaultConverter.log", 
-            LogEventLevel.Information, 
+
+        serilogConfig.WriteTo.File("anivaultConverter.log",
+            LogEventLevel.Information,
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 7,
             outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}");
@@ -21,14 +21,16 @@ builder.Services
 
 IHost host = builder.Build();
 
-using (var scope = host.Services.CreateScope())
+using (IServiceScope scope = host.Services.CreateScope())
 {
-    scope.ServiceProvider.UseScheduler(scheduler =>
-    {
-        scheduler.Schedule<VideoConverterTask>()
-            .EveryThirtySeconds()
-            .PreventOverlapping(nameof(VideoConverterTask));
-    })
-    .LogScheduledTaskProgress();
+    scope.ServiceProvider
+        .UseScheduler(scheduler =>
+        {
+            scheduler.Schedule<VideoConverterTask>()
+                .EveryThirtySeconds()
+                .PreventOverlapping(nameof(VideoConverterTask));
+        })
+        .LogScheduledTaskProgress();
 }
+
 host.Run();

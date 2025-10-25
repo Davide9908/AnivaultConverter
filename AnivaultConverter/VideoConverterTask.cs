@@ -2,7 +2,6 @@
 using FFMpegCore;
 using FFMpegCore.Arguments;
 using FFMpegCore.Enums;
-using FFMpegCore.Pipes;
 
 namespace AnivaultConverter;
 
@@ -12,8 +11,8 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
     private const string H264Codec = "h264";
     private readonly string[] _availableExtensions = [".mp4", ".mkv"];
     private readonly string _downloadingFolderPath;
-    private readonly string _toWatchFolderPath;
     private readonly ILogger<VideoConverterTask> _log;
+    private readonly string _toWatchFolderPath;
 
     public VideoConverterTask(IConfiguration configuration, ILogger<VideoConverterTask> log)
     {
@@ -30,13 +29,21 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
     {
         var directoryInfo = new DirectoryInfo(_downloadingFolderPath);
         var fileToConvertList = directoryInfo.GetFiles()
-            .Where(fi => _availableExtensions.Contains(fi.Extension) && fi.Name.StartsWith(DownloadingPrefix))
+            .Where(fi => _availableExtensions.Contains(fi.Extension) && !fi.Name.StartsWith(DownloadingPrefix))
             .ToList();
+        List<Task> runningConversion = [];
         foreach (FileInfo fileToConvert in fileToConvertList)
         {
+            if (runningConversion.Count(t => !t.IsCompleted) >= 2)
+            {
+                await Task.WhenAny(runningConversion);
+                CancellationToken.ThrowIfCancellationRequested();
+            }
+
             try
             {
-                IMediaAnalysis mediaInfo = await FFProbe.AnalyseAsync(fileToConvert.FullName, null, CancellationToken);
+                IMediaAnalysis mediaInfo =
+                    await FFProbe.AnalyseAsync(fileToConvert.FullName, cancellationToken: CancellationToken);
                 SubtitleStream? subs = mediaInfo.SubtitleStreams.FirstOrDefault(s => s.Language == "ita");
                 if (mediaInfo.VideoStreams.First().CodecName != H264Codec && subs == null)
                 {
@@ -46,12 +53,13 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
 
                 if (subs is null)
                 {
-                    await ConvertVideo(fileToConvert);
+                    runningConversion.Add(ConvertVideo(fileToConvert));
                     DeleteFile(fileToConvert);
                     return;
                 }
-                await ConvertAndPrintSubs(fileToConvert, subs);
-                DeleteFile(fileToConvert);
+
+                var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs);
+                runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex));
             }
             catch (Exception ex)
             {
@@ -59,83 +67,83 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
             }
         }
 
+        //if i have just 2 files, the foreach ends without waiting for the 2 task, with this i'm sure i wait for everything to complete  
+        await Task.WhenAll(runningConversion);
     }
 
-    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, SubtitleStream subsInfo)
+    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, int subIndex)
     {
-        var subtitleOptions = SubtitleHardBurnOptions.Create(fileToConvert.FullName);
-        subtitleOptions.SetSubtitleIndex(subsInfo.Index);
-        _log.Info("Inizio la conversione e stampaggio dei sottotitoli");
-        await FFMpegArguments
-            // -i "filepath"
-            .FromFileInput(fileToConvert.FullName)
+        try
+        {
+            var subtitleOptions = SubtitleHardBurnOptions.Create(fileToConvert.FullName);
+            subtitleOptions.SetSubtitleIndex(subIndex);
+            _log.Info("Inizio la conversione e stampaggio dei sottotitoli del file {filename}", fileToConvert.Name);
 
-            // "newfilepath" (e opzioni)
-            .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
-                // -map 0:v:0 (METODO CORRETTO)
-                .WithCustomArgument("-map 0:v:0")
-
-                // -map 0:a:0 (METODO CORRETTO)
-                .WithCustomArgument("-map 0:a:0")
-
-                // -c:v hevc_qsv
-                .WithVideoCodec("hevc_qsv")
-
-                // -preset medium
-                .WithSpeedPreset(Speed.Medium)
-
-                // -global_quality 24
-                .WithCustomArgument("-global_quality 24")
-
-                // -vf "subtitles='...':si=0"
-                .WithVideoFilters(filters => filters
-                    // 3. Passa l'oggetto opzioni già configurato
-                    .HardBurnSubtitle(subtitleOptions)
+            await FFMpegArguments
+                // -i "filepath"
+                .FromFileInput(fileToConvert.FullName, true, options => options
+                    .WithHardwareAcceleration(HardwareAccelerationDevice.QSV)
+                    // .WithCustomArgument("-hwaccel qsv")     // Inizializza l'hardware QSV
+                    .WithCustomArgument("-hwaccel_output_format nv12")
+                    .WithCustomArgument("-c:v h264_qsv")
                 )
+                .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+                    .WithCustomArgument("-map 0:v:0")
+                    .WithCustomArgument("-map 0:a:0")
+                    .WithVideoCodec("hevc_qsv")
+                    .WithCustomArgument("-global_quality 24")
+                    .WithSpeedPreset(Speed.Medium)
+                    .WithVideoFilters(filters => filters
+                        .HardBurnSubtitle(subtitleOptions)
+                    )
 
-                // -c:a copy
-                .WithAudioCodec(AudioCodec.Copy)
-            )
-            .NotifyOnError(Console.WriteLine)
-            .CancellableThrough(CancellationToken)
-            .ProcessAsynchronously(true);
-        
-        _log.Info("Conversione e stampaggio dei sottotitoli del file {filename} completata", fileToConvert.Name);
+                    // -c:a copy
+                    .WithAudioCodec(AudioCodec.Copy)
+                )
+                .NotifyOnError(Console.WriteLine)
+                .CancellableThrough(CancellationToken)
+                .ProcessAsynchronously();
+
+            _log.Info("Conversione e stampaggio dei sottotitoli del file {filename} completata", fileToConvert.Name);
+            DeleteFile(fileToConvert);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Error processing file {file}", fileToConvert.Name);
+        }
     }
-    
+
     private async Task ConvertVideo(FileInfo fileToConvert)
     {
-        
-        _log.Info("Inizio la conversione del video");
-        await FFMpegArguments
-            // -i "filepath"
-            .FromFileInput(fileToConvert.FullName)
+        try
+        {
+            _log.Info("Inizio la conversione del video");
+            await FFMpegArguments
+                .FromFileInput(fileToConvert.FullName, true, options => options
+                    .WithHardwareAcceleration(HardwareAccelerationDevice.QSV)
+                    // .WithCustomArgument("-hwaccel qsv")     // Inizializza l'hardware QSV
+                    .WithCustomArgument("-hwaccel_output_format nv12")
+                    .WithCustomArgument("-c:v h264_qsv")
+                )
+                .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+                    .WithCustomArgument("-map 0:v:0")
+                    .WithCustomArgument("-map 0:a:0")
+                    .WithVideoCodec("hevc_qsv")
+                    .WithSpeedPreset(Speed.Medium)
+                    .WithCustomArgument("-global_quality 24")
+                    .WithAudioCodec(AudioCodec.Copy)
+                )
+                .NotifyOnError(Console.WriteLine)
+                .CancellableThrough(CancellationToken)
+                .ProcessAsynchronously();
 
-            // "newfilepath" (e opzioni)
-            .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
-                // -map 0:v:0 (METODO CORRETTO)
-                .WithCustomArgument("-map 0:v:0")
-
-                // -map 0:a:0 (METODO CORRETTO)
-                .WithCustomArgument("-map 0:a:0")
-
-                // -c:v hevc_qsv
-                .WithVideoCodec("hevc_qsv")
-
-                // -preset medium
-                .WithSpeedPreset(Speed.Medium)
-
-                // -global_quality 24
-                .WithCustomArgument("-global_quality 24")
-
-                // -c:a copy
-                .WithAudioCodec(AudioCodec.Copy)
-            )
-            .NotifyOnError(Console.WriteLine)
-            .CancellableThrough(CancellationToken)
-            .ProcessAsynchronously(true);
-        
-        _log.Info("Conversione del video del file {filename} completata", fileToConvert.Name);
+            _log.Info("Conversione del video del file {filename} completata", fileToConvert.Name);
+            DeleteFile(fileToConvert);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Error processing file {file}", fileToConvert.Name);
+        }
     }
 
     private void DeleteFile(FileInfo fileToDelete)
