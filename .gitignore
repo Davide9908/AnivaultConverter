@@ -5,3 +5,4 @@ riderModule.iml
 /_ReSharper.Caches/
 appsettings.Development.json
 AnivaultConverter.sln.DotSettings.user
+*.log

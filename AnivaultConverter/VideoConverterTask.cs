@@ -1,4 +1,6 @@
-﻿using Coravel.Invocable;
+﻿using System.Globalization;
+using System.Text;
+using Coravel.Invocable;
 using FFMpegCore;
 using FFMpegCore.Arguments;
 using FFMpegCore.Enums;
@@ -44,22 +46,29 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
             {
                 IMediaAnalysis mediaInfo =
                     await FFProbe.AnalyseAsync(fileToConvert.FullName, cancellationToken: CancellationToken);
-                SubtitleStream? subs = mediaInfo.SubtitleStreams.FirstOrDefault(s => s.Language == "ita");
-                if (mediaInfo.VideoStreams.First().CodecName != H264Codec && subs == null)
+                var subs = mediaInfo.SubtitleStreams.Where(s => s.Language == "ita").ToList();
+                if (mediaInfo.VideoStreams.First().CodecName != H264Codec && !subs.Any())
                 {
                     File.Move(fileToConvert.FullName, Path.Combine(_toWatchFolderPath, fileToConvert.Name));
                     continue;
                 }
 
-                if (subs is null)
+                if (!subs.Any())
                 {
                     runningConversion.Add(ConvertVideo(fileToConvert));
                     DeleteFile(fileToConvert);
                     return;
                 }
 
-                var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs);
-                runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex));
+                if (subs.Count == 1)
+                {
+                    var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
+                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex));
+                }
+                else
+                {
+                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subs, mediaInfo.SubtitleStreams));
+                }
             }
             catch (Exception ex)
             {
@@ -83,7 +92,6 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 // -i "filepath"
                 .FromFileInput(fileToConvert.FullName, true, options => options
                     .WithHardwareAcceleration(HardwareAccelerationDevice.QSV)
-                    // .WithCustomArgument("-hwaccel qsv")     // Inizializza l'hardware QSV
                     .WithCustomArgument("-hwaccel_output_format nv12")
                     .WithCustomArgument("-c:v h264_qsv")
                 )
@@ -106,6 +114,90 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
 
             _log.Info("Conversione e stampaggio dei sottotitoli del file {filename} completata", fileToConvert.Name);
             DeleteFile(fileToConvert);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Error processing file {file}", fileToConvert.Name);
+        }
+    }
+    
+    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, List<SubtitleStream> itaSubs, List<SubtitleStream> allSubs)
+    {
+        try
+        {
+            _log.Info("Inizio l'estrazione dei sottotitoli del file {filename}", fileToConvert.Name);
+            int dotIndex = fileToConvert.Name.LastIndexOf('.');
+            string filename =  fileToConvert.Name.Substring(0, dotIndex);
+            List<string> subFilenames = new List<string>(itaSubs.Count);
+            foreach (var sub in itaSubs)
+            {
+                Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "anivaultConverter"));
+                int index = allSubs.IndexOf(sub);
+                string subFilename = Path.Combine(Path.GetTempPath(), "anivaultConverter", $"{filename}_sub{index:00}.ass");
+                subFilenames.Add(subFilename);
+                await ExtractSubtitleTrack(fileToConvert.FullName, $"0:s:{index}", subFilename);
+            }
+
+            string combinedSubs = Path.Combine(Path.GetTempPath(), "anivaultConverter", $"{filename}_subCombined.ass");
+            await CombineAssSubtitles(subFilenames, combinedSubs);
+            
+            var burnOptions = SubtitleHardBurnOptions.Create(combinedSubs);
+            _log.Info("Inizio la conversione e stampaggio dei sottotitoli del file {filename}", fileToConvert.Name);
+            
+            await FFMpegArguments
+                // -i "filepath"
+                .FromFileInput(fileToConvert.FullName)
+                .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+                    .WithCustomArgument("-map 0:v:0")
+                    .WithCustomArgument("-map 0:a:0")
+                    .WithVideoCodec("hevc_qsv")
+                    .WithCustomArgument("-global_quality 18")
+                    .WithSpeedPreset(Speed.Slow)
+                    .WithVideoFilters(filters => filters
+                        .HardBurnSubtitle(burnOptions)
+                    )
+                    // -c:a copy
+                    .WithAudioCodec(AudioCodec.Copy)
+                )
+                .NotifyOnError(Console.WriteLine)
+                .CancellableThrough(CancellationToken)
+                .ProcessAsynchronously();
+            
+            // await FFMpegArguments
+            //     // Input
+            //     .FromFileInput(fileToConvert.FullName, true, options => options
+            //             .WithHardwareAcceleration(HardwareAccelerationDevice.CUDA)
+            //             // .WithCustomArgument("-hwaccel cuda")                   // Usa accelerazione NVIDIA
+            //             // .WithCustomArgument("-hwaccel_output_format yuv420p")     // Mantiene i frame su GPU
+            //             // .WithCustomArgument("-c:v h264_cuvid")                 // Decoder NVIDIA hardware
+            //     )
+            //
+            //     // Output
+            //     .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+            //             .WithCustomArgument("-map 0:v:0")
+            //             .WithCustomArgument("-map 0:a:0")
+            //             .WithVideoCodec("hevc_nvenc")                          // Encoder NVIDIA HEVC
+            //             .WithCustomArgument("-preset slow")                    // Preset qualità (alternativa a .WithSpeedPreset)
+            //             .WithCustomArgument("-cq 18")                          // Controllo qualità costante (simile a -global_quality)
+            //             .WithVideoFilters(filters => filters
+            //                 .HardBurnSubtitle(burnOptions)
+            //             )
+            //             //.WithCustomArgument($"-vf hwdownload,format=yuv420p,subtitles=\"{combinedSubs.Replace("\\", "/")}\"")
+            //             .WithAudioCodec(AudioCodec.Copy)                       // Copia l’audio originale
+            //     )
+            //
+            //     .NotifyOnError(Console.WriteLine)
+            //     .CancellableThrough(CancellationToken)
+            //     .ProcessAsynchronously();
+
+            _log.Info("Conversione e stampaggio dei sottotitoli del file {filename} completata", fileToConvert.Name);
+            
+            DeleteFile(fileToConvert);
+            foreach (var subFile in subFilenames)
+            {
+                File.Delete(subFile);
+            }
+            File.Delete(combinedSubs);
         }
         catch (Exception ex)
         {
@@ -144,6 +236,53 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         {
             _log.Error(ex, "Error processing file {file}", fileToConvert.Name);
         }
+    }
+
+    private static async Task CombineAssSubtitles(IEnumerable<string> files, string outputFile)
+    {
+        var allLines = files.SelectMany(File.ReadAllLines).ToArray();
+        var firstFile = await File.ReadAllLinesAsync(files.First());
+
+        var header = firstFile.TakeWhile(l => !l.TrimStart().StartsWith("Dialogue:")).ToList();
+
+        List<string> ExtractDialogues(string[] lines) =>
+            lines
+                .SkipWhile(l => !l.Trim().Equals("[Events]", StringComparison.OrdinalIgnoreCase))
+                .Where(l => l.TrimStart().StartsWith("Dialogue:", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+        var allEvents = files
+            .SelectMany(f => ExtractDialogues(File.ReadAllLines(f)))
+            .ToList();
+
+        var sortedEvents = allEvents
+            .Select(l =>
+            {
+                var fields = l.Split(new[] { ',' }, 10);
+                if (fields.Length < 3) return (Line: l, Start: TimeSpan.MaxValue);
+                return (Line: l,
+                    Start: TimeSpan.TryParseExact(fields[1].Trim(), @"h\:mm\:ss\.ff", CultureInfo.InvariantCulture, out var t) ? t : TimeSpan.MaxValue);
+            })
+            .OrderBy(x => x.Start)
+            .Select(x => x.Line)
+            .ToList();
+
+        var outputLines = header.Concat(sortedEvents).ToList();
+        await File.WriteAllLinesAsync(outputFile, outputLines, new UTF8Encoding(true));
+    }
+    
+    private async Task ExtractSubtitleTrack(String inputFile, string streamSpecifier, string outputPath)
+    {
+        await FFMpegArguments
+            .FromFileInput(inputFile)
+            .OutputToFile(outputPath, true, options => options
+                    .WithCustomArgument($"-map {streamSpecifier}")
+                    .WithCustomArgument("-c copy")
+                    .WithCustomArgument("-f ass")
+            )
+            .NotifyOnError(Console.WriteLine)
+            .CancellableThrough(CancellationToken)
+            .ProcessAsynchronously();
     }
 
     private void DeleteFile(FileInfo fileToDelete)

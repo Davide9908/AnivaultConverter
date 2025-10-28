@@ -12,7 +12,7 @@ builder.Services
     {
         serilogConfig = serilogConfig.MinimumLevel.Information().WriteTo.Console();
 
-        serilogConfig.WriteTo.File("anivaultConverter.log",
+        serilogConfig.WriteTo.File("/log/anivaultConverter.log",
             LogEventLevel.Information,
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 7,
@@ -28,6 +28,7 @@ using (IServiceScope scope = host.Services.CreateScope())
         {
             scheduler.Schedule<VideoConverterTask>()
                 .EveryThirtySeconds()
+                .RunOnceAtStart()
                 .PreventOverlapping(nameof(VideoConverterTask));
         })
         .LogScheduledTaskProgress();
