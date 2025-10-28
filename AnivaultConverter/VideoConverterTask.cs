@@ -126,12 +126,14 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         try
         {
             _log.Info("Inizio l'estrazione dei sottotitoli del file {filename}", fileToConvert.Name);
+            
+            Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "anivaultConverter"));
+            
             int dotIndex = fileToConvert.Name.LastIndexOf('.');
             string filename =  fileToConvert.Name.Substring(0, dotIndex);
             List<string> subFilenames = new List<string>(itaSubs.Count);
             foreach (var sub in itaSubs)
             {
-                Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "anivaultConverter"));
                 int index = allSubs.IndexOf(sub);
                 string subFilename = Path.Combine(Path.GetTempPath(), "anivaultConverter", $"{filename}_sub{index:00}.ass");
                 subFilenames.Add(subFilename);
