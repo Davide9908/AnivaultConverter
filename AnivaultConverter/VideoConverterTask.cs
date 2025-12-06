@@ -53,6 +53,18 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     continue;
                 }
 
+                var subsToCheck = subs.ToList();
+                foreach (SubtitleStream subtitleStream in subsToCheck)
+                {
+                    if(subtitleStream.Tags?.TryGetValue("title", out var titleTag) ?? false)
+                    {
+                        if (titleTag.ToLowerInvariant() == "forced")
+                        {
+                            subs.Remove(subtitleStream);
+                        }
+                    }
+                }
+                
                 if (!subs.Any())
                 {
                     runningConversion.Add(ConvertVideo(fileToConvert));
@@ -60,6 +72,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     return;
                 }
 
+                
                 if (subs.Count == 1)
                 {
                     var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
