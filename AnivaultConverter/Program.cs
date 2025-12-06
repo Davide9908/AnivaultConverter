@@ -12,7 +12,7 @@ builder.Services
     {
         serilogConfig = serilogConfig.MinimumLevel.Information().WriteTo.Console();
 
-        serilogConfig.WriteTo.File("/log/anivaultConverter.log",
+        serilogConfig.WriteTo.File("log/anivaultConverter.log",
             LogEventLevel.Information,
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 7,
