@@ -40,6 +40,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
             {
                 await Task.WhenAny(runningConversion);
                 CancellationToken.ThrowIfCancellationRequested();
+                runningConversion.RemoveAll(t => t.IsCompleted);
             }
 
             try
