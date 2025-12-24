@@ -15,6 +15,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
     private readonly string _downloadingFolderPath;
     private readonly ILogger<VideoConverterTask> _log;
     private readonly string _toWatchFolderPath;
+    private readonly bool _leaveNormalSubs;
 
     public VideoConverterTask(IConfiguration configuration, ILogger<VideoConverterTask> log)
     {
@@ -22,6 +23,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                                  throw new InvalidOperationException("DownloadingFolderPath is missing");
         _toWatchFolderPath = configuration["ToWatchFolderPath"] ??
                              throw new InvalidOperationException("ToWatchFolderPath is missing");
+        _leaveNormalSubs = configuration.GetValue<bool>("LeaveNormalSubs");
         _log = log;
     }
 
@@ -53,18 +55,19 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     File.Move(fileToConvert.FullName, Path.Combine(_toWatchFolderPath, fileToConvert.Name));
                     continue;
                 }
-
+                
+                //i don't exactly remember 
                 var subsToCheck = subs.ToList();
-                foreach (SubtitleStream subtitleStream in subsToCheck)
-                {
-                    if(subtitleStream.Tags?.TryGetValue("title", out var titleTag) ?? false)
-                    {
-                        if (titleTag.ToLowerInvariant() == "forced")
-                        {
-                            subs.Remove(subtitleStream);
-                        }
-                    }
-                }
+                // foreach (SubtitleStream subtitleStream in subsToCheck)
+                // {
+                //     if(subtitleStream.Tags?.TryGetValue("title", out var titleTag) ?? false)
+                //     {
+                //         if (titleTag.ToLowerInvariant() == "forced")
+                //         {
+                //             subs.Remove(subtitleStream);
+                //         }
+                //     }
+                // }
                 
                 if (!subs.Any())
                 {
