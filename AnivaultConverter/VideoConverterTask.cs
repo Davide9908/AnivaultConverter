@@ -58,23 +58,11 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     continue;
                 }
                 
-                // var subsToCheck = subs.ToList();
-                // foreach (SubtitleStream subtitleStream in subsToCheck)
-                // {
-                //     if(subtitleStream.Tags?.TryGetValue("title", out var titleTag) ?? false)
-                //     {
-                //         if (titleTag.ToLowerInvariant() == "forced")
-                //         {
-                //             subs.Remove(subtitleStream);
-                //         }
-                //     }
-                // }
-                
                 if (!subs.Any())
                 {
                     runningConversion.Add(ConvertVideo(fileToConvert));
                     DeleteFile(fileToConvert);
-                    return;
+                    continue;
                 }
                 var listIta = new List<SubtitleStream>(subs.Count);
                 if (_leaveNormalSubs)
@@ -90,15 +78,19 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     int index = mediaInfo.SubtitleStreams.IndexOf(subToKeep);
                     mapSubsToKeep.AppendFormat("-map 0:s:{0} ", index);
                 }
-                
-                if (subs.Count == 1)
+
+                switch (subs.Count)
                 {
-                    var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
-                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex, mapSubsToKeep.ToString()));
-                }
-                else
-                {
-                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subs, mediaInfo.SubtitleStreams, mapSubsToKeep.ToString()));
+                    case 0:
+                        runningConversion.Add(ConvertVideo(fileToConvert, mapSubsToKeep.ToString()));
+                        break;
+                    case 1:
+                        var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
+                        runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex, mapSubsToKeep.ToString()));
+                        break;
+                    default:
+                        runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subs, mediaInfo.SubtitleStreams, mapSubsToKeep.ToString()));
+                        break;
                 }
             }
             catch (Exception ex)
@@ -197,33 +189,6 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .NotifyOnError(Console.WriteLine)
                 .CancellableThrough(CancellationToken)
                 .ProcessAsynchronously();
-            
-            // await FFMpegArguments
-            //     // Input
-            //     .FromFileInput(fileToConvert.FullName, true, options => options
-            //             .WithHardwareAcceleration(HardwareAccelerationDevice.CUDA)
-            //             // .WithCustomArgument("-hwaccel cuda")                   // Usa accelerazione NVIDIA
-            //             // .WithCustomArgument("-hwaccel_output_format yuv420p")     // Mantiene i frame su GPU
-            //             // .WithCustomArgument("-c:v h264_cuvid")                 // Decoder NVIDIA hardware
-            //     )
-            //
-            //     // Output
-            //     .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
-            //             .WithCustomArgument("-map 0:v:0")
-            //             .WithCustomArgument("-map 0:a:0")
-            //             .WithVideoCodec("hevc_nvenc")                          // Encoder NVIDIA HEVC
-            //             .WithCustomArgument("-preset slow")                    // Preset qualità (alternativa a .WithSpeedPreset)
-            //             .WithCustomArgument("-cq 18")                          // Controllo qualità costante (simile a -global_quality)
-            //             .WithVideoFilters(filters => filters
-            //                 .HardBurnSubtitle(burnOptions)
-            //             )
-            //             //.WithCustomArgument($"-vf hwdownload,format=yuv420p,subtitles=\"{combinedSubs.Replace("\\", "/")}\"")
-            //             .WithAudioCodec(AudioCodec.Copy)                       // Copia l’audio originale
-            //     )
-            //
-            //     .NotifyOnError(Console.WriteLine)
-            //     .CancellableThrough(CancellationToken)
-            //     .ProcessAsynchronously();
 
             _log.Info("Conversione e stampaggio dei sottotitoli del file {filename} completata", fileToConvert.Name);
             
@@ -240,7 +205,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         }
     }
 
-    private async Task ConvertVideo(FileInfo fileToConvert)
+    private async Task ConvertVideo(FileInfo fileToConvert, string keepSubs = "")
     {
         try
         {
@@ -255,6 +220,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
                     .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithSpeedPreset(Speed.Slow)
                     .WithCustomArgument("-global_quality 18")
