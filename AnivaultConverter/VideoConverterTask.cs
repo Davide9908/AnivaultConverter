@@ -81,8 +81,11 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
 
                 switch (subs.Count)
                 {
-                    case 0:
+                    case 0 when mediaInfo.VideoStreams.First().CodecName == H264Codec:
                         runningConversion.Add(ConvertVideo(fileToConvert, mapSubsToKeep.ToString()));
+                        break;
+                    case 0 :
+                        runningConversion.Add(KeepOnlySpecifiedSubsFromVideo(fileToConvert, mapSubsToKeep.ToString()));
                         break;
                     case 1:
                         var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
@@ -225,6 +228,37 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     .WithSpeedPreset(Speed.Slow)
                     .WithCustomArgument("-global_quality 18")
                     .WithAudioCodec(AudioCodec.Copy)
+                )
+                .NotifyOnError(Console.WriteLine)
+                .CancellableThrough(CancellationToken)
+                .ProcessAsynchronously();
+
+            _log.Info("Conversione del video del file {filename} completata", fileToConvert.Name);
+            DeleteFile(fileToConvert);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Error processing file {file}", fileToConvert.Name);
+        }
+    }
+    
+    private async Task KeepOnlySpecifiedSubsFromVideo(FileInfo fileToConvert, string keepSubs)
+    {
+        if (keepSubs == string.Empty)
+        {
+            throw new ArgumentException("Argument cannot be empty", nameof(keepSubs));
+        }
+        try
+        {
+            _log.Info("Inizio la conversione del video");
+            await FFMpegArguments
+                .FromFileInput(fileToConvert.FullName, true)
+                .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+                    .WithCustomArgument("-map 0:v:0")
+                    .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument(keepSubs)
+                    .CopyChannel(Channel.Both)
+                    .CopyChannel(Channel.Subtitle)
                 )
                 .NotifyOnError(Console.WriteLine)
                 .CancellableThrough(CancellationToken)
