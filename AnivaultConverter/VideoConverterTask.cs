@@ -11,6 +11,8 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
 {
     private const string DownloadingPrefix = "downloading_";
     private const string H264Codec = "h264";
+    private const string ASSSubCodec = "ass";
+    private const string SRTSubCodec = "subrip";
     private readonly string[] _availableExtensions = [".mp4", ".mkv"];
     private readonly string _downloadingFolderPath;
     private readonly ILogger<VideoConverterTask> _log;
@@ -56,8 +58,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     continue;
                 }
                 
-                //i don't exactly remember 
-                var subsToCheck = subs.ToList();
+                // var subsToCheck = subs.ToList();
                 // foreach (SubtitleStream subtitleStream in subsToCheck)
                 // {
                 //     if(subtitleStream.Tags?.TryGetValue("title", out var titleTag) ?? false)
@@ -75,16 +76,29 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     DeleteFile(fileToConvert);
                     return;
                 }
-
+                var listIta = new List<SubtitleStream>(subs.Count);
+                if (_leaveNormalSubs)
+                {
+                    listIta.AddRange(subs);
+                    subs = subs.Where(s => s.Disposition?["forced"] ?? false).ToList();
+                    listIta = listIta.Except(subs).ToList();
+                }
+                
+                StringBuilder mapSubsToKeep = new StringBuilder();
+                foreach (var subToKeep in listIta)
+                {
+                    int index = mediaInfo.SubtitleStreams.IndexOf(subToKeep);
+                    mapSubsToKeep.AppendFormat("-map 0:s:{0} ", index);
+                }
                 
                 if (subs.Count == 1)
                 {
                     var subsIndex = mediaInfo.SubtitleStreams.IndexOf(subs.First());
-                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex));
+                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subsIndex, mapSubsToKeep.ToString()));
                 }
                 else
                 {
-                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subs, mediaInfo.SubtitleStreams));
+                    runningConversion.Add(ConvertAndPrintSubs(fileToConvert, subs, mediaInfo.SubtitleStreams, mapSubsToKeep.ToString()));
                 }
             }
             catch (Exception ex)
@@ -97,7 +111,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         await Task.WhenAll(runningConversion);
     }
 
-    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, int subIndex)
+    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, int subIndex, string keepSubs = "")
     {
         try
         {
@@ -115,6 +129,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
                     .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithCustomArgument("-global_quality 18")
                     .WithSpeedPreset(Speed.Slow)
@@ -138,7 +153,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         }
     }
     
-    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, List<SubtitleStream> itaSubs, List<SubtitleStream> allSubs)
+    private async Task ConvertAndPrintSubs(FileInfo fileToConvert, List<SubtitleStream> itaSubs, List<SubtitleStream> allSubs, string keepSubs = "")
     {
         try
         {
@@ -154,7 +169,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 int index = allSubs.IndexOf(sub);
                 string subFilename = Path.Combine(Path.GetTempPath(), "anivaultConverter", $"{filename}_sub{index:00}.ass");
                 subFilenames.Add(subFilename);
-                await ExtractSubtitleTrack(fileToConvert.FullName, $"0:s:{index}", subFilename);
+                await ExtractSubtitleTrack(fileToConvert.FullName, $"0:s:{index}", subFilename, sub.CodecName);
             }
 
             string combinedSubs = Path.Combine(Path.GetTempPath(), "anivaultConverter", $"{filename}_subCombined.ass");
@@ -169,6 +184,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
                     .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithCustomArgument("-global_quality 18")
                     .WithSpeedPreset(Speed.Slow)
@@ -290,18 +306,35 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         await File.WriteAllLinesAsync(outputFile, outputLines, new UTF8Encoding(true));
     }
     
-    private async Task ExtractSubtitleTrack(String inputFile, string streamSpecifier, string outputPath)
+    private async Task ExtractSubtitleTrack(String inputFile, string streamSpecifier, string outputPath, string codecName)
     {
-        await FFMpegArguments
-            .FromFileInput(inputFile)
-            .OutputToFile(outputPath, true, options => options
-                    .WithCustomArgument($"-map {streamSpecifier}")
-                    .WithCustomArgument("-c copy")
-                    .WithCustomArgument("-f ass")
-            )
-            .NotifyOnError(Console.WriteLine)
-            .CancellableThrough(CancellationToken)
-            .ProcessAsynchronously();
+        switch (codecName)
+        {
+            case ASSSubCodec:
+                await FFMpegArguments
+                    .FromFileInput(inputFile)
+                    .OutputToFile(outputPath, true, options => options
+                        .WithCustomArgument($"-map {streamSpecifier}")
+                        .WithCustomArgument("-c:s copy")
+                    )
+                    .NotifyOnError(Console.WriteLine)
+                    .CancellableThrough(CancellationToken)
+                    .ProcessAsynchronously();
+                break;
+            case SRTSubCodec:
+                await FFMpegArguments
+                    .FromFileInput(inputFile)
+                    .OutputToFile(outputPath, true, options => options
+                        .WithCustomArgument($"-map {streamSpecifier}")
+                        .WithCustomArgument("-c:s ass")
+                    )
+                    .NotifyOnError(Console.WriteLine)
+                    .CancellableThrough(CancellationToken)
+                    .ProcessAsynchronously();
+                break;
+            default: throw new InvalidOperationException($"Codec {codecName} not supported");
+        }
+        
     }
 
     private void DeleteFile(FileInfo fileToDelete)
