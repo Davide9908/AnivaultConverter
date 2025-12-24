@@ -116,11 +116,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
 
             await FFMpegArguments
                 // -i "filepath"
-                .FromFileInput(fileToConvert.FullName, true, options => options
-                    .WithHardwareAcceleration(HardwareAccelerationDevice.QSV)
-                    .WithCustomArgument("-hwaccel_output_format nv12")
-                    .WithCustomArgument("-c:v h264_qsv")
-                )
+                .FromFileInput(fileToConvert.FullName, true)
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
                     .WithCustomArgument("-map 0:a:0")
