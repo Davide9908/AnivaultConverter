@@ -65,7 +65,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     continue;
                 }
                 var listIta = new List<SubtitleStream>(subs.Count);
-                if (_leaveNormalSubs)
+                if (_leaveNormalSubs && !fileToConvert.Name.StartsWith("Fumetsu no Anata e S03E"))
                 {
                     listIta.AddRange(subs);
                     subs = subs.Where(s => s.Disposition?["forced"] ?? false).ToList();
