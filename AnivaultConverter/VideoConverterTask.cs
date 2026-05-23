@@ -65,7 +65,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                     continue;
                 }
                 var listIta = new List<SubtitleStream>(subs.Count);
-                if (_leaveNormalSubs && !fileToConvert.Name.StartsWith("Fumetsu no Anata e S03E"))
+                if (_leaveNormalSubs)
                 {
                     listIta.AddRange(subs);
                     subs = subs.Where(s => s.Disposition?["forced"] ?? false).ToList();
@@ -119,7 +119,8 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .FromFileInput(fileToConvert.FullName, true)
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
-                    .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument("-map 0:a")
+                    .CopyChannel(Channel.Both)
                     .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithCustomArgument("-global_quality 18")
@@ -173,8 +174,9 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 // -i "filepath"
                 .FromFileInput(fileToConvert.FullName)
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
+                    .WithCustomArgument("-map 0:a")
                     .WithCustomArgument("-map 0:v:0")
-                    .WithCustomArgument("-map 0:a:0")
+                    .CopyChannel(Channel.Both)
                     .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithCustomArgument("-global_quality 18")
@@ -218,7 +220,8 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 )
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
-                    .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument("-map 0:a")
+                    .CopyChannel(Channel.Both)
                     .WithCustomArgument(keepSubs)
                     .WithVideoCodec("hevc_qsv")
                     .WithSpeedPreset(Speed.Slow)
@@ -251,7 +254,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 .FromFileInput(fileToConvert.FullName, true)
                 .OutputToFile(Path.Combine(_toWatchFolderPath, fileToConvert.Name), true, options => options
                     .WithCustomArgument("-map 0:v:0")
-                    .WithCustomArgument("-map 0:a:0")
+                    .WithCustomArgument("-map 0:a")
                     .WithCustomArgument(keepSubs)
                     .CopyChannel(Channel.Both)
                     .CopyChannel(Channel.Subtitle)
@@ -302,7 +305,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
         await File.WriteAllLinesAsync(outputFile, outputLines, new UTF8Encoding(true));
     }
     
-    private async Task ExtractSubtitleTrack(String inputFile, string streamSpecifier, string outputPath, string codecName)
+    private async Task ExtractSubtitleTrack(string inputFile, string streamSpecifier, string outputPath, string codecName)
     {
         switch (codecName)
         {

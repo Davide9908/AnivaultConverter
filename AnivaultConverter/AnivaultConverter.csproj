@@ -13,8 +13,8 @@
         <PackageReference Include="Coravel" Version="6.0.2"/>
         <PackageReference Include="FFMpegCore" Version="5.4.0" />
         <PackageReference Include="JetBrains.Annotations" Version="2025.2.4" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
-        <PackageReference Include="Serilog" Version="4.3.0"/>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+        <PackageReference Include="Serilog" Version="4.3.1" />
         <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
         <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
         <PackageReference Include="Serilog.Sinks.File" Version="7.0.0"/>
