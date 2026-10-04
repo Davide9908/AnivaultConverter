@@ -68,6 +68,7 @@ public class VideoConverterTask : IInvocable, ICancellableInvocable
                 if (_leaveNormalSubs)
                 {
                     listIta.AddRange(subs);
+                    subs.Clear();
                     //subs = subs.Where(s => s.Disposition?["forced"] ?? false).ToList();
                     //listIta = listIta.Except(subs).ToList();
                 }
